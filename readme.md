@@ -74,6 +74,52 @@ Decouples file reception from processing and allows for retries.
 Technologies: Redis with Celery (Python), RabbitMQ, Apache Kafka.
 
 # Workflow
+```mermaid
+graph TD
+    A["<div style='font-weight:bold; font-size:1.1em;'>👤 User</div>Uploads Audio Files via Telegram"] --> B["<div style='font-weight:bold; font-size:1.1em;'>🤖 Telegram Bot</div>Receives Files & User Info"];
+    B --> C["<div style='font-weight:bold; font-size:1.1em;'>🌐 Flask API</div>POST /api/v1/audio/upload<br/>(User ID, Files, Report ID)"];
+    C --> D["<div style='font-weight:bold; font-size:1.1em;'>⚙️ Backend Logic (API)</div>Validates Request<br/>Saves Files Temporarily<br/>Creates Main Report Job"];
+    D --> E["<div style='font-weight:bold; font-size:1.1em;'>🔄 Backend Logic (API)</div>Dispatches Individual Audio Processing Tasks<br/>(e.g., to Celery Queue)"];
+
+    subgraph Asynchronous Processing (Parallel for each audio file)
+        direction LR
+        F["<div style='font-weight:bold; font-size:1em;'>👷 Task Worker (e.g., Celery)</div>Picks up a single audio task"] --> G["Speech-to-Text (STT)<br/>Audio ➔ Text"];
+        G -- Transcribed Text --> H["Large Language Model (LLM)<br/>Text ➔ Structured Data<br/>(Nama, Alamat, Jumlah Minuman)"];
+        H -- Extracted Data / Error --> I["Task Worker Reports Result<br/>(Success or Failure for this file)"];
+    end
+    E -.-> F;
+
+    I --> J["<div style='font-weight:bold; font-size:1.1em;'>🌐 Flask API</div>POST /api/v1/internal/task_complete<br/>(Task ID, Report ID, Status, Data/Error)"];
+    J --> K["<div style='font-weight:bold; font-size:1.1em;'>⚙️ Backend Logic (API)</div>Updates Individual Task Status<br/>Aggregates Results for the Report ID"];
+
+    K -- All Tasks for Report ID Processed --> L["<div style='font-weight:bold; font-size:1.1em;'>⚙️ Backend Logic (API)</div>Checks Overall Report Status"];
+    L -- All/Sufficient Tasks Successful --> M["Generates Final CSV Report<br/>Saves CSV to Storage"];
+    M --> N["<div style='font-weight:bold; font-size:1.1em;'>⚙️ Backend Logic (API)</div>Updates Report Status: COMPLETED<br/>Notifies Telegram Bot (or Bot Polls Status)"];
+    
+    L -- Some/All Tasks Failed --> O["Updates Report Status: FAILED/PARTIALLY_COMPLETED<br/>(May still generate partial CSV if applicable)"];
+    O --> N;
+
+    N --> P["<div style='font-weight:bold; font-size:1.1em;'>🤖 Telegram Bot</div>Receives Report Status & URL (if successful)"];
+    P --> Q["<div style='font-weight:bold; font-size:1.1em;'>👤 User</div>Receives CSV Report/Download Link or Failure Notification via Telegram"];
+
+    style A fill:#e0f2fe,stroke:#0ea5e9,stroke-width:2px
+    style Q fill:#e0f2fe,stroke:#0ea5e9,stroke-width:2px
+    style B fill:#dcfce7,stroke:#22c55e,stroke-width:2px
+    style P fill:#dcfce7,stroke:#22c55e,stroke-width:2px
+    style C fill:#ffedd5,stroke:#f97316,stroke-width:2px
+    style J fill:#ffedd5,stroke:#f97316,stroke-width:2px
+    style D fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px
+    style E fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px
+    style K fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px
+    style L fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px
+    style M fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px
+    style N fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px
+    style O fill:#fee2e2,stroke:#ef4444,stroke-width:2px
+    style F fill:#fef3c7,stroke:#eab308,stroke-width:2px
+    style G fill:#fef3c7,stroke:#eab308,stroke-width:2px
+    style H fill:#fef3c7,stroke:#eab308,stroke-width:2px
+    style I fill:#fef3c7,stroke:#eab308,stroke-width:2px
+```
 1. User Upload: User uploads audio files (up to 30) via the Telegram bot and signals completion.
 
 2. Bot to Backend: The bot forwards files and user ID to the backend server.
